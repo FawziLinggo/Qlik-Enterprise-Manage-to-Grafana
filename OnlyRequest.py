@@ -32,6 +32,7 @@ servers_status_utilization_status_memory_avg = Gauge('qlik_enterprise_manager_se
 servers_status_utilization_status_attunity_cpu_avg = Gauge('qlik_enterprise_manager_server_attunity_cpu_avg_percentage', 'Attunity CPU utilization average percentage', ['serverName'])
 servers_status_utilization_status_machine_cpu_avg = Gauge('qlik_enterprise_manager_server_machine_cpu_avg_percentage', 'Machine CPU utilization average percentage', ['serverName'])
 servers_status_utilization_status_full_load_avg_throughput = Gauge('qlik_enterprise_manager_server_full_load_avg_throughput_bytes', 'Full load average throughput in bytes', ['serverName'])
+servers_status_utilization_status_full_load_avg_latency = Gauge('qlik_enterprise_manager_server_full_load_avg_latency_seconds', 'Full load average latency in seconds', ['serverName'])
 
 def helper_fix_bytes_to_mb(bytes):
     # two decimal places
@@ -132,6 +133,7 @@ def avgMaxMachine_utilization():
     url_avg_attunity_cpu = base_url + 'analytics/server/replicate/trends/server-utilization/server-avg-attunity-cpu'
     url_avg_machine_cpu = base_url + 'analytics/server/replicate/trends/server-utilization/server-avg-machine-cpu'
     url_load_full_avg_throughput = base_url + 'analytics/server/replicate/trends/full-load/server-avg-target-throughput-changes'
+    url_load_full_avg_latency = base_url + 'analytics/server/replicate/trends/full-load/server-avg-apply-latency'
 
     end_time = datetime.utcnow()
     end_time_str = end_time.strftime("%Y-%m-%dT%H:%M:%S.000Z")
@@ -205,7 +207,19 @@ def avgMaxMachine_utilization():
         log.error('Login failed with error: ' + handleHealthCheck(response_avg_memory.headers))
         log.error('Error: ' + str(response_avg_memory.headers))
         exit(1)
-        
+    
+    response_load_full_avg_latency = requests.put(url_load_full_avg_latency, headers=Header, verify=False, json=request_body)
+    if handleHealthCheck(response_load_full_avg_latency.headers) == '200':
+        jsonData = json.loads(response_load_full_avg_latency.text)['serversTrends']
+        for server_data_avg in jsonData:
+            serverName = server_data_avg['serverName']
+            avgLatency = server_data_avg['serverTrends']['avg_apply_latency'][0]['value']
+            servers_status_utilization_status_full_load_avg_latency.labels(serverName=serverName).set(avgLatency)
+    else:
+        log.error('Login failed with error: ' + handleHealthCheck(response_avg_memory.headers))
+        log.error('Error: ' + str(response_avg_memory.headers))
+        exit(1)
+
 if __name__ == '__main__':
     start_http_server(PORT)
     log.info('Server started on port ' + str(PORT))
