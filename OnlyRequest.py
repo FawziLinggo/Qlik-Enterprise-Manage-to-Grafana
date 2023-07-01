@@ -1,9 +1,9 @@
 import requests, json, time
-from requests.packages.urllib3.exceptions import InsecureRequestWarning
+from urllib3.exceptions import InsecureRequestWarning
 from prometheus_client import start_http_server, Summary,Counter,Gauge,Info
 import logging as log
 from datetime import datetime, timedelta
-
+import configparser
 
 # Set log level
 log.basicConfig(level=log.INFO, format='%(asctime)s - %(levelname)s - %(message)s - Line %(lineno)d')
@@ -12,15 +12,20 @@ log.basicConfig(level=log.INFO, format='%(asctime)s - %(levelname)s - %(message)
 # Remove WARN SSL
 requests.packages.urllib3.disable_warnings(InsecureRequestWarning)
 
-SessionID = '0gTjdpeSzk343RccblWjhw'
-XSRFTOKEN = 'TQYPeK8OsLONGfpLqueTUQ'
-PORT = 8899
+
+config = configparser.ConfigParser()		
+config.read("config.ini")
+SERVER_PROPERTIES = config['SERVER']
+SessionID = SERVER_PROPERTIES['Session_ID']
+XSRFTOKEN = SERVER_PROPERTIES['X_SRF_TOKEN']
+PORT = int(SERVER_PROPERTIES['PORT'])
 Header = {
     'Cookie': 'EnterpriseManager.SessionID=' + SessionID + '; XSRF-TOKEN=' + XSRFTOKEN,
     'X-XSRF-TOKEN': XSRFTOKEN,
     }
 
-base_url = 'https://qlikqemalldata/attunityenterprisemanager/rest/'
+base_url = SERVER_PROPERTIES['BASE_URL'] +'/attunityenterprisemanager/rest/'
+interval_sleep = int(SERVER_PROPERTIES['Interval_Time_in_Seconds'])
 
 server_summary_info = Gauge('qlik_enterprise_manager_server_summary', 'Total server', ['status'])
 server_task_info = Gauge('qlik_enterprise_manager_task_summary', 'Total task', ['status'])
@@ -33,6 +38,13 @@ servers_status_utilization_status_attunity_cpu_avg = Gauge('qlik_enterprise_mana
 servers_status_utilization_status_machine_cpu_avg = Gauge('qlik_enterprise_manager_server_machine_cpu_avg_percentage', 'Machine CPU utilization average percentage', ['serverName'])
 servers_status_utilization_status_full_load_avg_throughput = Gauge('qlik_enterprise_manager_server_full_load_avg_throughput_bytes', 'Full load average throughput in bytes', ['serverName'])
 servers_status_utilization_status_full_load_avg_latency = Gauge('qlik_enterprise_manager_server_full_load_avg_latency_seconds', 'Full load average latency in seconds', ['serverName'])
+task_utilization_status_avg_memory = Gauge('qlik_enterprise_manager_task_avg_memory_bytes', 'Task average memory in bytes', ['taskName'])
+task_utilization_status_avg_cpu = Gauge('qlik_enterprise_manager_task_avg_cpu_percentage', 'Task average CPU in percentage', ['taskName'])
+task_utilization_status_avg_disk = Gauge('qlik_enterprise_manager_task_avg_disk_percentage', 'Task average disk in percentage', ['taskName'])
+task_utilization_status_avg_source_throughput = Gauge('qlik_enterprise_manager_task_avg_source_throughput_bytes', 'Task average source throughput in bytes', ['taskName'])
+task_utilization_status_avg_target_throughput = Gauge('qlik_enterprise_manager_task_avg_target_throughput_bytes', 'Task average target throughput in bytes', ['taskName'])
+task_utilization_status_avg_source_latency = Gauge('qlik_enterprise_manager_task_avg_source_latency_seconds', 'Task average source latency in seconds', ['taskName'])
+task_utilization_status_avg_apply_latency = Gauge('qlik_enterprise_manager_task_avg_target_apply_seconds', 'Task average apply latency in seconds', ['taskName'])
 
 def helper_fix_bytes_to_mb(bytes):
     # two decimal places
@@ -220,6 +232,77 @@ def avgMaxMachine_utilization():
         log.error('Error: ' + str(response_avg_memory.headers))
         exit(1)
 
+def avgTask_utilization():
+    url_task_avg_memory = base_url + 'analytics/server/replicate/capacity-planning/server-utilization/avg-memory'
+    url_task_avg_cpu = base_url + 'analytics/server/replicate/capacity-planning/server-utilization/avg-cpu'
+    url_task_avg_disk = base_url + 'analytics/server/replicate/capacity-planning/server-utilization/avg-disk-usage'
+    url_task_avg_source_target_throughput_latency = base_url + 'analytics/server/replicate/capacity-planning/change-processing-performance/avg-source-and-target-throughput-with-avg-source-and-apply-latency'
+
+    end_time = datetime.utcnow()
+    end_time_str = end_time.strftime("%Y-%m-%dT%H:%M:%S.000Z")
+    start_time_60_minutes_ago = end_time - timedelta(minutes=60)
+    start_time_60_minutes_ago_str = start_time_60_minutes_ago.strftime("%Y-%m-%dT%H:%M:%S.000Z")
+
+    request_body = {
+            "start": start_time_60_minutes_ago_str,
+            "end": end_time_str,
+            "trend_level": [
+                "Hourly"
+            ],
+            "limit": 0
+            }
+    response_avg_memory = requests.put(url_task_avg_memory, headers=Header, verify=False, json=request_body)
+    if handleHealthCheck(response_avg_memory.headers) == '200':
+        jsonData = json.loads(response_avg_memory.text)['avg_memory_by_task']
+        for server_data_avg in jsonData:
+            serverName = server_data_avg['server']
+            TaskName = server_data_avg['task'].replace(' ', '-')
+            serverTaskName = serverName + '_' + TaskName
+            avgMemory = server_data_avg['avg_memory'][0]['value']
+            task_utilization_status_avg_memory.labels(taskName=serverTaskName).set(avgMemory)
+    else:
+        log.error('Login failed with error: ' + handleHealthCheck(response_avg_memory.headers))
+        log.error('Error: ' + str(response_avg_memory.headers))
+        exit(1)
+
+    response_avg_cpu = requests.put(url_task_avg_cpu, headers=Header, verify=False, json=request_body)
+    if handleHealthCheck(response_avg_memory.headers) == '200':
+        jsonData = json.loads(response_avg_cpu.text)['avg_CPU_by_task']
+        for server_data_avg in jsonData:
+            serverName = server_data_avg['server']
+            TaskName = server_data_avg['task'].replace(' ', '-')
+            serverTaskName = serverName + '_' + TaskName
+            avgCPU = server_data_avg['avg_CPU'][0]['value']
+            task_utilization_status_avg_cpu.labels(taskName=serverTaskName).set(avgCPU)
+    else:
+        log.error('Login failed with error: ' + handleHealthCheck(response_avg_cpu.headers))
+        log.error('Error: ' + str(response_avg_cpu.headers))
+        exit(1)
+
+    response_avg_disk = requests.put(url_task_avg_disk, headers=Header, verify=False, json=request_body)
+    if handleHealthCheck(response_avg_disk.headers) == '200':
+        jsonData = json.loads(response_avg_disk.text)['avg_disk_usage_by_task']
+        for server_data_avg in jsonData:
+            serverName = server_data_avg['server']
+            TaskName = server_data_avg['task'].replace(' ', '-')
+            serverTaskName = serverName + '_' + TaskName
+            avgDisk = server_data_avg['avg_disk_usage'][0]['value']
+            task_utilization_status_avg_disk.labels(taskName=serverTaskName).set(avgDisk)
+    else:
+        log.error('Login failed with error: ' + handleHealthCheck(response_avg_disk.headers))
+        log.error('Error: ' + str(response_avg_disk.headers))
+        exit(1)
+    
+    response_avg_throughput_latency = requests.put(url_task_avg_source_target_throughput_latency, headers=Header, verify=False, json=request_body)
+    if handleHealthCheck(response_avg_throughput_latency.headers) == '200':
+        jsonData = json.loads(response_avg_throughput_latency.text)
+        task_utilization_status_avg_source_throughput.labels(taskName='avg_source_throughput').set(jsonData['avg_source_throughput'][0]['value'])
+        task_utilization_status_avg_target_throughput.labels(taskName='avg_target_throughput').set(jsonData['avg_target_throughput'][0]['value'])
+        task_utilization_status_avg_source_latency.labels(taskName='avg_source_latency').set(jsonData['avg_source_latency'][0]['value'])
+        task_utilization_status_avg_apply_latency.labels(taskName='avg_apply_latency').set(jsonData['avg_apply_latency'][0]['value'])
+
+        
+
 if __name__ == '__main__':
     start_http_server(PORT)
     log.info('Server started on port ' + str(PORT))
@@ -228,4 +311,5 @@ if __name__ == '__main__':
         getTaskSummary()
         updateUtilizationStatus()
         avgMaxMachine_utilization()
+        avgTask_utilization()
         time.sleep(1)    
