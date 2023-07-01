@@ -1,6 +1,6 @@
 import requests, json, time
 from urllib3.exceptions import InsecureRequestWarning
-from prometheus_client import start_http_server, Summary,Counter,Gauge,Info
+from prometheus_client import start_http_server, Gauge
 import logging as log
 from datetime import datetime, timedelta
 import configparser
